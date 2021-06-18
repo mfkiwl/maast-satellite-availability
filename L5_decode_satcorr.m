@@ -39,7 +39,8 @@ global L5MOPS_DFREI_DNUSBAS
 global L5MOPS_MIN_GPSPRN L5MOPS_MAX_GPSPRN L5MOPS_MIN_GLOPRN L5MOPS_MAX_GLOPRN 
 global L5MOPS_MIN_GALPRN L5MOPS_MAX_GALPRN L5MOPS_MIN_GEOPRN L5MOPS_MAX_GEOPRN
 global L5MOPS_MIN_BDSPRN L5MOPS_MAX_BDSPRN
-global L5MOPS_MT31_PATIMEOUT L5MOPS_DFRE_PATIMEOUT L5MOPS_MT37_PATIMEOUT 
+global L5MOPS_MT31_PATIMEOUT L5MOPS_MT37_PATIMEOUT 
+global L5MOPS_DFRE_PATIMEOUT L5MOPS_AUTHDFRE_PATIMEOUT
 
 max_prns = L5MOPS_MAX_BDSPRN;
 
@@ -130,7 +131,7 @@ if ~isempty(mdx37)
                         iodg = idx - 1;
                         dt_corr = time - svdata.mt3940(idx, gdx).time;
                         kdx40 = svdata.mt3940(idx, gdx).kdx40;
-                        dt40 = time - svdata.mt40(kdx40, idx).time;
+                        dt40 = time - svdata.mt40(idx, kdx40).time;
                     end
                 end
             end
@@ -202,8 +203,9 @@ if ~isempty(mdx37)
             end
         end
     end
-        %find the most recent authenticated MT 35 with matching MT 31
-    mdx35 = find(([svdata.mt35.time] >= (time - L5MOPS_DFRE_PATIMEOUT)) & ...
+    
+    %find the most recent authenticated MT 35 with matching MT 31
+    mdx35 = find(([svdata.mt35.time] >= (time - L5MOPS_AUTHDFRE_PATIMEOUT)) & ...
               svdata.auth_pass([svdata.mt35.msg_idx])');
     if ~isempty(mdx35)
         dt35 = NaN;
@@ -228,6 +230,34 @@ if ~isempty(mdx37)
         end
     end
     
+    %set the DFREs to NM for any SV with a timed out DFREI
+    svdata.dfrei(dtdfrei > L5MOPS_AUTHDFRE_PATIMEOUT) = L5MOPS_DFREI_DNUSBAS;
+    
+    %find the most recent MT 35 with matching MT 31 (not necessarily authenticated)
+    mdx35 = find([svdata.mt35.time] >= (time - L5MOPS_DFRE_PATIMEOUT));
+    if ~isempty(mdx35)
+        dt35 = NaN;
+        idx = 1;
+        while isnan(dt35) && idx <= length(mdx35)
+            %Must have valid MT 31 message with matching IODM in order to use MT35
+            mdx31 = find(([svdata.mt31.time] >= (time - L5MOPS_MT31_PATIMEOUT)) & ...
+                      svdata.auth_pass([svdata.mt31.msg_idx])' &  ...
+                      ([svdata.mt31.iodm] == svdata.mt35(mdx35(idx)).iodm));
+            if ~isempty(mdx31)
+                mdx31 = mdx31(1); %use the most recent one
+   
+                % find which DFREI need to be updated
+                dt35 = time - svdata.mt35(mdx35(idx)).time;
+%                 idxdfrei = find(dtdfrei > dt35);
+                idxdfrei = dtdfrei > dt35;
+                idxmt35 = svdata.mt31(mdx31).prn2slot(idxdfrei);
+                svdata.dfrei(idxdfrei) = max(svdata.dfrei(idxdfrei), svdata.mt35(mdx35(idx)).dfrei(idxmt35));
+                dtdfrei(idxdfrei) = dt35;
+            end
+            idx = idx + 1;
+        end
+    end
+    
     %load in the degradation terms
     svdata.degradation = eps_corr;
     
@@ -235,7 +265,9 @@ if ~isempty(mdx37)
     svdata.dfrei(dtdfrei > L5MOPS_DFRE_PATIMEOUT) = L5MOPS_DFREI_DNUSBAS;
     
     corr_t_out = svdata.mt37(mdx37).Ivalid32*ones(size(dtcorr));
-    corr_t_out(svdata.geo_prn) = svdata.mt37(mdx37).Ivalid3940;
+    if ~isnan(svdata.geo_prn)
+        corr_t_out(svdata.geo_prn) = svdata.mt37(mdx37).Ivalid3940;
+    end
     %set the DFREs to NM for any SV with a timed out correction
     svdata.dfrei(dtcorr > corr_t_out) = L5MOPS_DFREI_DNUSBAS;    
 end
